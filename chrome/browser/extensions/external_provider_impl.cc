@@ -27,6 +27,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
+#include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/extensions/extension_management.h"
@@ -35,10 +36,10 @@
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/external_pref_loader.h"
 #include "chrome/browser/extensions/forced_extensions/install_stage_tracker.h"
+#include "chrome/browser/extensions/initial_external_extension_loader.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/web_applications/preinstalled_app_install_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -50,32 +51,42 @@
 #include "extensions/browser/external_install_info.h"
 #include "extensions/browser/external_provider_interface.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/preinstalled_apps.h"
+#include "chrome/browser/web_applications/preinstalled_app_install_features.h"
+#endif
+
 #if BUILDFLAG(IS_CHROMEOS)
-#include "ash/components/arc/arc_util.h"
 #include "ash/constants/ash_paths.h"
+#include "ash/constants/ash_switches.h"
 #include "base/path_service.h"
 #include "chrome/browser/ash/customization/customization_document.h"
-#include "chrome/browser/ash/extensions/signin_screen_extensions_external_loader.h"
+#include "chrome/browser/ash/extensions/authentication_screen_extensions_external_loader.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/policy/core/device_local_account_policy_service.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_external_loader.h"
 #include "chrome/browser/chromeos/extensions/external_loader/device_local_account_external_policy_loader.h"
+#include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
 #include "chromeos/components/kiosk/kiosk_utils.h"
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
+#include "chromeos/constants/chromeos_features.h"
 #else
-#include "chrome/browser/extensions/preinstalled_apps.h"
-#include "components/policy/core/common/device_local_account_type.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/extensions/external_registry_loader_win.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserThread;
 using extensions::mojom::ManifestLocation;
@@ -334,9 +345,8 @@ void ExternalProviderImpl::RetrieveExtensionsFromPrefs(
     const base::Value::List* supported_locales =
         extension_dict.FindList(kSupportedLocales);
     if (supported_locales) {
-      std::vector<std::string> browser_locales;
-      l10n_util::GetParentLocales(g_browser_process->GetApplicationLocale(),
-                                  &browser_locales);
+      std::vector<std::string> browser_locales = l10n_util::GetParentLocales(
+          g_browser_process->GetApplicationLocale());
 
       bool locale_supported = false;
       for (const base::Value& locale : *supported_locales) {
@@ -387,12 +397,18 @@ void ExternalProviderImpl::RetrieveExtensionsFromPrefs(
     // so it can get uninstalled by WebAppUiManager::UninstallAndReplace() once
     // the replacement web app has installed and migrated over user preferences.
     // TODO(crbug.com/1099150): Remove this field after migration is complete.
+    // TODO(crbug.com/409795200): Decide how to handle this on desktop Android.
+    // We can't currently depend on //chrome/browser/web_applications.
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     const std::string* web_app_migration_flag =
         extension_dict.FindString(kWebAppMigrationFlag);
     bool is_migrating_to_web_app =
         web_app_migration_flag &&
-        web_app::IsPreinstalledAppInstallFeatureEnabled(*web_app_migration_flag,
-                                                        *profile_);
+        web_app::IsPreinstalledAppInstallFeatureEnabled(
+            *web_app_migration_flag);
+#else
+    bool is_migrating_to_web_app = false;
+#endif
     bool keep_if_present =
         extension_dict.FindBool(kKeepIfPresent).value_or(false);
     if (keep_if_present || is_migrating_to_web_app) {
@@ -539,6 +555,29 @@ bool ExternalProviderImpl::HasExtension(
   return prefs_->contains(id);
 }
 
+bool ExternalProviderImpl::HasExtensionWithLocation(
+    const std::string& id,
+    mojom::ManifestLocation location) const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  CHECK(prefs_);
+  CHECK(ready_);
+  const base::Value::Dict* dict = prefs_->FindDict(id);
+  if (!dict) {
+    return false;
+  }
+
+  if (dict->contains(kExternalUpdateUrl) && location == download_location_) {
+    return true;
+  }
+
+  if (dict->contains(kExternalCrx) && dict->FindString(kExternalVersion) &&
+      location == crx_location_) {
+    return true;
+  }
+
+  return false;
+}
+
 bool ExternalProviderImpl::GetExtensionDetails(
     const std::string& id,
     ManifestLocation* location,
@@ -630,17 +669,20 @@ void ExternalProviderImpl::CreateExternalProviders(
                "ExternalProviderImpl::CreateExternalProviders");
   scoped_refptr<ExternalLoader> external_loader;
   scoped_refptr<ExternalLoader> external_recommended_loader;
-  ManifestLocation crx_location = ManifestLocation::kInvalidLocation;
+  [[maybe_unused]] ManifestLocation crx_location =
+      ManifestLocation::kInvalidLocation;
 
 #if BUILDFLAG(IS_CHROMEOS)
-  if (ash::ProfileHelper::IsSigninProfile(profile)) {
-    // Download extensions/apps installed by policy in the login profile.
-    // Extensions (not apps) installed through this path will have type
-    // |TYPE_LOGIN_SCREEN_EXTENSION| with limited API capabilities.
+  const bool install_on_lock_screen =
+      chromeos::features::IsLockScreenBadgeAuthEnabled() &&
+      ash::IsLockScreenBrowserContext(profile);
+  if (ash::IsSigninBrowserContext(profile) || install_on_lock_screen) {
+    // Download extensions/apps installed by policy in the login and lock screen
+    // profiles. Extensions (not apps) installed through this path will have
+    // type |TYPE_LOGIN_SCREEN_EXTENSION| with limited API capabilities.
     crx_location = ManifestLocation::kExternalPolicyDownload;
-    external_loader =
-        base::MakeRefCounted<chromeos::SigninScreenExtensionsExternalLoader>(
-            profile);
+    external_loader = base::MakeRefCounted<
+        chromeos::AuthenticationScreenExtensionsExternalLoader>(profile);
     auto signin_profile_provider = std::make_unique<ExternalProviderImpl>(
         service, external_loader, profile, crx_location,
         ManifestLocation::kExternalPolicyDownload, Extension::FOR_LOGIN_SCREEN);
@@ -696,7 +738,11 @@ void ExternalProviderImpl::CreateExternalProviders(
   // mode.
   if (IsRunningInForcedAppMode()) {
 #if BUILDFLAG(IS_CHROMEOS)
-    if (profiles::IsChromeAppKioskSession()) {
+    if (profiles::IsChromeAppKioskSession() &&
+        // If kPreventKioskAutolaunchForTesting is specified,
+        // the app won't be provided, so skip these providers.
+        !base::CommandLine::ForCurrentProcess()->HasSwitch(
+            ash::switches::kPreventKioskAutolaunchForTesting)) {
       ManifestLocation location = ManifestLocation::kExternalPolicy;
 
       if (!connector->IsDeviceEnterpriseManaged())
@@ -831,7 +877,7 @@ void ExternalProviderImpl::CreateExternalProviders(
 #endif
   }
 
-#if !BUILDFLAG(IS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(ENABLE_EXTENSIONS)
   // The pre-installed apps are installed as INTERNAL but use the external
   // extension installer codeflow.
   provider_list->push_back(std::make_unique<preinstalled_apps::Provider>(
@@ -858,6 +904,21 @@ void ExternalProviderImpl::CreateExternalProviders(
       service, base::MakeRefCounted<ExternalComponentLoader>(profile), profile,
       ManifestLocation::kInvalidLocation, ManifestLocation::kExternalComponent,
       Extension::FROM_WEBSTORE | Extension::WAS_INSTALLED_BY_DEFAULT));
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  if (base::FeatureList::IsEnabled(features::kInitialExternalExtensions)) {
+    auto initial_external_extensions_provider =
+        std::make_unique<ExternalProviderImpl>(
+            service,
+            base::MakeRefCounted<InitialExternalExtensionLoader>(
+                *profile->GetPrefs()),
+            profile, ManifestLocation::kExternalPref,
+            ManifestLocation::kExternalPrefDownload, Extension::FROM_WEBSTORE);
+    initial_external_extensions_provider->set_allow_updates(true);
+    initial_external_extensions_provider->set_auto_acknowledge(false);
+    provider_list->push_back(std::move(initial_external_extensions_provider));
+  }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 }  // namespace extensions

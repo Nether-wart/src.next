@@ -485,6 +485,7 @@
     "right",
     "center",
     "justify",
+    "match-parent",
     "-webkit-left",
     "-webkit-right",
     "-webkit-center",
@@ -512,6 +513,7 @@
     //none
     //
     // The order must match the order found in IsDisplayOutside().
+    // "block" also a keyword for caret-shape
     "inline",
     "block",
     // The order must match the order found in IsDisplayInside().
@@ -520,7 +522,7 @@
     "table",
     "flex",
     "grid",
-    "masonry",
+    "grid-lanes",
     //"math",
     //"ruby",
     // The order must match the order found in IsDisplayBox().
@@ -541,7 +543,7 @@
     "inline-table",
     "inline-flex",
     "inline-grid",
-    "inline-masonry",
+    "inline-grid-lanes",
     "-webkit-box",
     "-webkit-inline-box",
     "-webkit-flex",
@@ -785,6 +787,9 @@
     "max-content",
     "fit-content",
 
+    // contain-intrinsic-size
+    "from-element",
+
     //
     // text-autospace
     //
@@ -904,10 +909,12 @@
     // stretch
     // repeat
     "round",
-    // TODO(crbug.com/1511354): "base-select" is a temporary name for customizable
-    // <select>. It should be renamed when a standardized name is chosen.
+    "base",
     "base-select",
-    "-internal-appearance-auto-base-select",
+    "-internal-auto-base",
+    // Used to set the `content` property of the pseudo-element "hint" given to
+    // elements with partial interest (via `interestfor` keyboard activation).
+    "-internal-partial-interest-content",
 
     //
     // background-clip/background-origin
@@ -1089,6 +1096,7 @@
     "under",
     //right
     //left
+    //auto
 
     // -webkit-text-emphasis-style
     "filled",
@@ -1204,12 +1212,31 @@
     // column-fill
     "balance",
 
+    // corner-shape
+    // "bevel",
+    "notch",
+    // "round",
+    "scoop",
+    "squircle",
+    // "square",
+    "superellipse",
+
     // -webkit-app-region
     "drag",
     "no-drag",
 
     // grid-{column|row}-{start|end}
     "span",
+
+    // grid-lanes-direction
+    // row
+    // row-reverse
+    // column
+    // column-reverse
+
+    // grid-lanes-fill
+    // normal
+    // reverse
 
     // grid-template-{columns|rows}
     "minmax",
@@ -1263,6 +1290,32 @@
     "ideographic",
     "hanging",
     "mathematical",
+
+    // gap-rule-overlap
+    "row-over-column",
+    "column-over-row",
+
+    // column-rule-break
+    // none
+    "intersection",
+    "spanning-item",
+
+    // row-rule-break
+    // none
+    // intersection
+    // spanning-item
+
+    // column-rule-visibility-items
+    // none
+    // all
+    "around",
+    "between",
+
+    // row-rule-visibility-items
+    // none
+    // all
+    // around
+    // between
 
     // dominant-baseline
     // auto
@@ -1334,6 +1387,7 @@
     // inherit
     "revert",
     "revert-layer",
+    "revert-rule",
     "unset",
 
     // background-image, etc.
@@ -1371,6 +1425,27 @@
 
     // shapes
     "polygon",
+    "shape",
+    // "from",
+    // "to",
+    "by",
+    "line",
+    "close",
+    "hline",
+    "vline",
+    "arc",
+    // "rotate",
+    "cw",
+    "ccw",
+    // "large",
+    // "small",
+    // "of",
+    "curve",
+    // "smooth",
+    // "start",
+    // "end",
+    "origin",
+    "with",
 
     // @font-face src
     "format",
@@ -1425,8 +1500,10 @@
     // "rec2020", included in color-gamut
     "srgb-linear",
     "display-p3",
+    "display-p3-linear",
     "a98-rgb",
     "prophoto-rgb",
+    "rec2100-linear",
     "xyz",
     "xyz-d50",
     "xyz-d65",
@@ -1496,6 +1573,10 @@
     // coord-box
     "stroke-box",
 
+    // border-shape specific geometry box
+    // https://drafts.csswg.org/css-borders-4/#border-shape
+    "half-border-box",
+
     // math functions
     // https://drafts.csswg.org/css-values-4/#math
     "calc",
@@ -1537,6 +1618,9 @@
     "log",
     "exp",
 
+    // Random functions
+    "random",
+
     //<calc-constant>
     //https://drafts.csswg.org/css-values/#calc-syntax
     "infinity",
@@ -1572,6 +1656,7 @@
     "size",
     "block-size",
     "inline-size",
+    "view-transition",
 
     // @container
     // size
@@ -1585,6 +1670,7 @@
     "block-end",
     // inline-start,
     // inline-end,
+    "anchored",
 
     // grid auto-repeat
     "auto-fill",
@@ -1720,14 +1806,20 @@
     // ([video]-dynamic-range) media feature, and dynamic-range-limit property
     "standard",
     "high",
-    "constrained-high",
+    "no-limit",
+    "constrained",
     "dynamic-range-limit-mix",
 
     // Layered @import rule
     "layer",
 
+    // if(route())
+    "route",
+
     // supports in import rule: @import supports()
     "supports",
+    // @import scope()
+    "scope",
 
     // color-contrast()
     "color-contrast",
@@ -1795,11 +1887,15 @@
     "layered",
     // flat
 
+    // view-transition-name
+    "match-element",
+
     // container-type
     // inline-size,
     // normal,
     // size,
     // scroll-state,
+    // anchored,
 
     // (scripting:) media feature
     "enabled",
@@ -1821,6 +1917,10 @@
     "x-self-end",
     "span-x-self-start",
     "span-x-self-end",
+    "self-x-start",
+    "self-x-end",
+    "span-self-x-start",
+    "span-self-x-end",
     "span-all",
     // top,
     // bottom,
@@ -1834,6 +1934,10 @@
     "y-self-end",
     "span-y-self-start",
     "span-y-self-end",
+    "self-y-start",
+    "self-y-end",
+    "span-self-y-start",
+    "span-self-y-end",
     // block-start,
     // block-end,
     "span-block-start",
@@ -1883,6 +1987,8 @@
     "flip-block",
     "flip-inline",
     "flip-start",
+    "flip-x",
+    "flip-y",
 
     // position-visibility
     // always
@@ -1898,10 +2004,19 @@
     "grid-rows",
     "grid-columns",
     "grid-order",
+    "source-order",
 
     // fill / stroke
     "context-fill",
     "context-stroke",
+
+    // text-grow / text-shrink
+    "per-line",
+    "consistent",
+    // "scale",
+    "font-size",
+    "scale-inline",
+    "letter-spacing",
 
     // media-progress()
     "media-progress",
@@ -1920,5 +2035,63 @@
     // interactivity
     // auto
     "inert",
+
+    // Used as functions in calc()
+    "sibling-count",
+    "sibling-index",
+
+    // https://drafts.csswg.org/css-values-5/#ident
+    "ident",
+
+    // @function
+    "returns",
+
+    // animation-trigger-type
+    // repeat
+    // alternate
+    "once",
+    "state",
+
+    // inline conditional
+    "if",
+    "else",
+    "media",
+
+    // scroll-marker-group navigation/a11y modes
+    "tabs",
+    "links",
+
+    // caret-shape
+    // block is elsewhere
+    "bar",
+    "underscore",
+
+    // continue
+    "-webkit-legacy",
+
+    // block-ellipsis
+    "no-ellipsis",
+
+    // text-justify
+    // "auto",
+    // "none",
+    "inter-word",
+    // "inter-character",
+    "distribute",
+
+    // animation-trigger
+    "play",
+    "pause",
+    // "reset",
+    "play-once",
+    "play-alternate",
+    "play-forwards",
+    "play-backwards",
+    "play-pause",
+    "replay",
+    // "none",
+
+    // counter-reset
+    "reversed",
   ],
 }

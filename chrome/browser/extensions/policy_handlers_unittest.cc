@@ -17,7 +17,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/browser/extensions/extension_management_constants.h"
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
@@ -32,6 +31,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -40,9 +40,11 @@
 #include "base/win/win_util.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::mojom::ManifestLocation;
 
@@ -379,6 +381,9 @@ TEST(ExtensionInstallForceListPolicyHandlerTest, ApplyPolicySettings) {
   EXPECT_EQ(expected, handler.GetPolicyDict(policy_map));
 }
 
+// TODO(crbug.com/394876083): Support the ExtensionInstallSources policy to
+// enable this test.
+#if !BUILDFLAG(IS_ANDROID)
 TEST(ExtensionURLPatternListPolicyHandlerTest, CheckPolicySettings) {
   base::Value::List list;
   policy::PolicyMap policy_map;
@@ -454,6 +459,7 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, ApplyPolicySettings) {
   ASSERT_TRUE(prefs.GetValue(kTestPref, &value));
   EXPECT_EQ(list, *value);
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
   auto policy_result = base::JSONReader::ReadAndReturnValueWithError(

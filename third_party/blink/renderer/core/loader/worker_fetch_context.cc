@@ -27,7 +27,6 @@
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/virtual_time_controller.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 namespace blink {
@@ -185,6 +184,8 @@ void WorkerFetchContext::PrepareRequest(
     ResourceLoaderOptions& options,
     WebScopedVirtualTimePauser& virtual_time_pauser,
     ResourceType resource_type) {
+  GetExecutionContext()->MaybeRecordNetworkRequestUrlForPushEvents(
+      request.Url());
   request.SetUkmSourceId(GetExecutionContext()->UkmSourceID());
 
   String user_agent = global_scope_->UserAgent();
@@ -198,14 +199,6 @@ void WorkerFetchContext::PrepareRequest(
   request.SetStorageAccessApiStatus(
       GetExecutionContext()->GetStorageAccessApiStatus());
 
-  if (!RuntimeEnabledFeatures::
-          MinimimalResourceRequestPrepBeforeCacheLookupEnabled()) {
-    std::optional<WebURL> overriden_url =
-        web_context_->WillSendRequest(request.Url());
-    if (overriden_url.has_value()) {
-      request.SetUrl(*overriden_url);
-    }
-  }
   WrappedResourceRequest webreq(request);
   web_context_->FinalizeRequest(webreq);
   if (auto* worker_scope = DynamicTo<WorkerGlobalScope>(*global_scope_)) {
@@ -218,6 +211,12 @@ void WorkerFetchContext::PrepareRequest(
   }
 
   probe::PrepareRequest(Probe(), nullptr, request, options, resource_type);
+
+  request.SetAllowsDeviceBoundSessionRegistration(
+      RuntimeEnabledFeatures::DeviceBoundSessionCredentialsEnabled(
+          GetExecutionContext()) ||
+      RuntimeEnabledFeatures::DeviceBoundSessionCredentials2Enabled(
+          GetExecutionContext()));
 }
 
 void WorkerFetchContext::AddAdditionalRequestHeaders(ResourceRequest& request) {
@@ -241,16 +240,19 @@ void WorkerFetchContext::AddResourceTiming(
   resource_timing_notifier_->AddResourceTiming(std::move(info), initiator_type);
 }
 
+void WorkerFetchContext::ModifyRequestForMixedContentUpgrade(
+    ResourceRequest& request) {
+  MixedContentChecker::UpgradeInsecureRequest(
+      request, &GetResourceFetcherProperties().GetFetchClientSettingsObject(),
+      global_scope_, mojom::blink::RequestContextFrameType::kNone,
+      global_scope_->ContentSettingsClient(), nullptr);
+}
+
 void WorkerFetchContext::PopulateResourceRequestBeforeCacheAccess(
     const ResourceLoaderOptions& options,
     ResourceRequest& request) {
-  DCHECK(RuntimeEnabledFeatures::
-             MinimimalResourceRequestPrepBeforeCacheLookupEnabled());
-
-  MixedContentChecker::UpgradeInsecureRequest(
-      request, &GetResourceFetcherProperties().GetFetchClientSettingsObject(),
-      global_scope_, mojom::RequestContextFrameType::kNone,
-      global_scope_->ContentSettingsClient());
+  ModifyRequestForMixedContentUpgrade(request);
+  request.SetTopFrameOrigin(GetTopFrameOrigin());
 }
 
 void WorkerFetchContext::WillSendRequest(ResourceRequest& request) {
@@ -266,19 +268,14 @@ void WorkerFetchContext::UpgradeResourceRequestForLoader(
     const std::optional<float> resource_width,
     ResourceRequest& out_request,
     const ResourceLoaderOptions& options) {
-  if (!GetResourceFetcherProperties().IsDetached())
+  if (!GetResourceFetcherProperties().IsDetached()) {
     probe::SetDevToolsIds(Probe(), out_request, options.initiator_info);
-  if (!RuntimeEnabledFeatures::
-          MinimimalResourceRequestPrepBeforeCacheLookupEnabled()) {
-    MixedContentChecker::UpgradeInsecureRequest(
-        out_request,
-        &GetResourceFetcherProperties().GetFetchClientSettingsObject(),
-        global_scope_, mojom::RequestContextFrameType::kNone,
-        global_scope_->ContentSettingsClient());
   }
   SetFirstPartyCookie(out_request);
-  if (!out_request.TopFrameOrigin())
-    out_request.SetTopFrameOrigin(GetTopFrameOrigin());
+}
+
+const FeatureContext* WorkerFetchContext::GetFeatureContext() const {
+  return GetExecutionContext();
 }
 
 std::unique_ptr<ResourceLoadInfoNotifierWrapper>
@@ -296,9 +293,8 @@ WorkerSettings* WorkerFetchContext::GetWorkerSettings() const {
   return scope ? scope->GetWorkerSettings() : nullptr;
 }
 
-bool WorkerFetchContext::AllowRunningInsecureContent(
-    bool enabled_per_settings,
-    const KURL& url) const {
+bool WorkerFetchContext::AllowRunningInsecureContent(bool enabled_per_settings,
+                                                     const KURL& url) const {
   if (!global_scope_->ContentSettingsClient())
     return enabled_per_settings;
   return global_scope_->ContentSettingsClient()->AllowRunningInsecureContent(

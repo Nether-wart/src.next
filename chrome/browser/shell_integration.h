@@ -12,7 +12,6 @@
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
-#include "ui/gfx/image/image_family.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -129,6 +128,25 @@ std::string GetFirefoxProgIdSuffix();
 // application for the given scheme and return the appropriate state.
 DefaultWebClientState IsDefaultClientForScheme(const std::string& scheme);
 
+#if BUILDFLAG(IS_WIN)
+// Returns a `DefaultWebClientState` indicating whether this instance of Chrome
+// is the default app for `file_extension`. `file_extension` must include a
+// leading `.`, e.g., ".pdf".
+DefaultWebClientState IsDefaultHandlerForFileExtension(
+    const std::string& file_extension);
+#endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(IS_MAC)
+// Returns a `DefaultWebClientState` indicating whether this instance of Chrome
+// is the default app for `type`. `type` must be a UTType identifier,
+// e.g., "com.adobe.pdf".
+DefaultWebClientState IsDefaultHandlerForUTType(const std::string& type);
+
+// Sets Chrome as the default app for `type` (only for the current user). `type`
+// must be a UTType identifier, e.g., "com.adobe.pdf".
+bool SetAsDefaultHandlerForUTType(const std::string& type);
+#endif  // BUILDFLAG(IS_MAC)
+
 // Is the current instance of Chrome running in App mode.
 bool IsRunningInAppMode();
 
@@ -161,6 +179,20 @@ void AppendProfileArgs(const base::FilePath& profile_path,
 // Gets the name of the Chrome Apps menu folder in which to place app
 // shortcuts. This is needed for Mac and Linux.
 std::u16string GetAppShortcutsSubdirName();
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
+    BUILDFLAG(IS_WIN)
+// Returns the URL scheme for google-chrome:// URLs.
+// This varies based on channel, branding, and platform to ensure that
+// different installations do not collide. For example:
+// - "google-chrome" for Google Chrome stable
+// - "google-chrome-beta" on Linux for Google Chrome beta, and on macOS and
+//   Windows for side-by-side Google Chrome beta installs.
+// - "chromium" for Chromium
+// This should not be used for Chrome for Testing builds, as those builds
+// are not intended for user installation or shell integration.
+std::string GetDirectLaunchUrlScheme();
 #endif
 
 // The type of callback used to communicate processing state to consumers of

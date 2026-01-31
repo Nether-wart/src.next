@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/css/css_custom_font_data.h"
 #include "third_party/blink/renderer/core/css/css_font_face.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/platform/fonts/bitmap_glyphs_block_list.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_custom_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
@@ -41,15 +42,9 @@ bool LocalFontFaceSource::IsLocalNonBlocking() const {
 
 bool LocalFontFaceSource::IsLocalFontAvailable(
     const FontDescription& font_description) const {
-  // TODO(crbug.com/1027158): Remove metrics code after metrics collected.
   // TODO(crbug.com/1025945): Properly handle Windows prior to 10 and Android.
   bool font_available = FontCache::Get().IsPlatformFontUniqueNameMatchAvailable(
       font_description, font_name_);
-  if (font_available) {
-    font_selector_->ReportSuccessfulLocalFontMatch(font_name_);
-  } else {
-    font_selector_->ReportFailedLocalFontMatch(font_name_);
-  }
   return font_available;
 }
 
@@ -71,7 +66,7 @@ const SimpleFontData* LocalFontFaceSource::CreateFontData(
     const FontDescription& font_description,
     const FontSelectionCapabilities& font_selection_capabilities) {
   if (!IsValid()) {
-    ReportFontLookup(font_description, nullptr);
+    ReportFontLookup(font_description);
     return nullptr;
   }
 
@@ -86,8 +81,7 @@ const SimpleFontData* LocalFontFaceSource::CreateFontData(
   if (IsValid() && IsLoading()) {
     const SimpleFontData* fallback_font_data =
         CreateLoadingFallbackFontData(font_description);
-    ReportFontLookup(font_description, fallback_font_data,
-                     true /* is_loading_fallback */);
+    ReportFontLookup(font_description, true /* is_loading_fallback */);
     return fallback_font_data;
   }
 
@@ -129,28 +123,32 @@ const SimpleFontData* LocalFontFaceSource::CreateFontData(
   // RemoteFontFaceSource.
   FontCustomPlatformData* custom_platform_data =
       FontCustomPlatformData::Create(typeface, 0);
+
+  const FontPlatformData* platform_data =
+      custom_platform_data->GetFontPlatformData(
+          font_description.EffectiveFontSize(),
+          font_description.AdjustedSpecifiedSize(),
+          font_description.IsSyntheticBold() &&
+              font_description.SyntheticBoldAllowed(),
+          font_description.IsSyntheticItalic() &&
+              font_description.SyntheticItalicAllowed(),
+          font_description.GetFontSelectionRequest(),
+          font_selection_capabilities, font_description.FontOpticalSizing(),
+          font_description.TextRendering(),
+          font_description.ResolveFontFeatures(),
+          font_description.Orientation(), font_description.VariationSettings(),
+          font_description.GetFontPalette());
+
+  FontPlatformData* platform_data_avoid_bitmaps =
+      MakeGarbageCollected<FontPlatformData>(*platform_data);
+
+  platform_data_avoid_bitmaps->SetAvoidEmbeddedBitmaps(
+      BitmapGlyphsBlockList::ShouldAvoidEmbeddedBitmapsForTypeface(*typeface));
+
   SimpleFontData* font_data_variations_palette_applied =
-      MakeGarbageCollected<SimpleFontData>(
-          custom_platform_data->GetFontPlatformData(
-              font_description.EffectiveFontSize(),
-              font_description.AdjustedSpecifiedSize(),
-              font_description.IsSyntheticBold() &&
-                  font_description.SyntheticBoldAllowed(),
-              font_description.IsSyntheticItalic() &&
-                  font_description.SyntheticItalicAllowed(),
-              font_description.GetFontSelectionRequest(),
-              font_selection_capabilities, font_description.FontOpticalSizing(),
-              font_description.TextRendering(),
-              font_description.GetFontVariantAlternates()
-                  ? font_description.GetFontVariantAlternates()
-                        ->GetResolvedFontFeatures()
-                  : ResolvedFontFeatures(),
-              font_description.Orientation(),
-              font_description.VariationSettings(),
-              font_description.GetFontPalette()));
+      MakeGarbageCollected<SimpleFontData>(platform_data_avoid_bitmaps);
 
   histograms_.Record(font_data_variations_palette_applied);
-  ReportFontLookup(unstyled_description, font_data_variations_palette_applied);
   return font_data_variations_palette_applied;
 }
 
@@ -163,8 +161,8 @@ void LocalFontFaceSource::BeginLoadIfNeeded() {
       FontGlobalContext::Get().GetFontUniqueNameLookup();
   DCHECK(unique_name_lookup);
   unique_name_lookup->PrepareFontUniqueNameLookup(
-      WTF::BindOnce(&LocalFontFaceSource::NotifyFontUniqueNameLookupReady,
-                    WrapWeakPersistent(this)));
+      BindOnce(&LocalFontFaceSource::NotifyFontUniqueNameLookupReady,
+               WrapWeakPersistent(this)));
   face_->DidBeginLoad();
 }
 
@@ -201,14 +199,6 @@ void LocalFontFaceSource::Trace(Visitor* visitor) const {
   visitor->Trace(face_);
   visitor->Trace(font_selector_);
   CSSFontFaceSource::Trace(visitor);
-}
-
-void LocalFontFaceSource::ReportFontLookup(
-    const FontDescription& font_description,
-    const SimpleFontData* font_data,
-    bool is_loading_fallback) {
-  font_selector_->ReportFontLookupByUniqueNameOnly(
-      font_name_, font_description, font_data, is_loading_fallback);
 }
 
 }  // namespace blink

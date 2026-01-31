@@ -16,7 +16,7 @@
 #include "base/containers/flat_set.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/singleton.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
@@ -26,6 +26,7 @@
 #include "content/browser/isolation_context.h"
 #include "content/browser/origin_agent_cluster_isolation_state.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/child_process_id.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/common/bindings_policy.h"
 #include "storage/common/file_system/file_system_types.h"
@@ -51,7 +52,6 @@ namespace content {
 class BrowserContext;
 class IsolationContext;
 class ProcessLock;
-class ResourceContext;
 struct UrlInfo;
 
 class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
@@ -279,41 +279,26 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
       bool requests_origin_keyed_process,
       url::Origin* result);
 
-  // Removes any origin isolation opt-in entries associated with the
-  // |browsing_instance_id| of the BrowsingInstance.
-  void RemoveOptInIsolatedOriginsForBrowsingInstance(
+  // Removes any state associated with `browsing_instance_id`.
+  void RemoveAllStateForBrowsingInstance(
       const BrowsingInstanceId& browsing_instance_id);
 
   // Registers |origin| isolation state in the BrowsingInstance associated
   // with |isolation_context|.
   //
-  // |is_origin_agent_cluster| is used to indicate |origin| will receive (at
-  // least) logical isolation via OriginAgentCluster in the renderer. If it is
-  // false, then |requires_origin_keyed_process| must also be false.
-  //
-  // If |requires_origin_keyed_process| is true, then |origin| will be
-  // registered as an origin-keyed process; that is, subdomains of |origin|
-  // won't be automatically grouped with |origin|. In particular, this can be
-  // used for cases using the Origin-Agent-Cluster header.
-  //
-  // If |requires_origin_keyed_process| is false, then subdomains of |origin|
-  // will be grouped together with |origin| in the same process. |origin| is
-  // required to be a site (scheme and eTLD+1) in this case.
-  //
-  // If this function is called with differing values of
-  // |requires_origin_keyed_process| for
-  // the same IsolationContext and origin, then origin-keyed process isolation
-  // takes precedence for |origin|, though site-keyed process isolation will
-  // still be used for subdomains of |origin|.
+  // |oac_isolation_state| is the Origin-Agent-Cluster to register for the
+  // origin. It contains values describing both the logical isolation (i.e.
+  // agent cluster separation in the renderer process) and the process isolation
+  // that can be triggered by the Origin-Agent-Cluster header, the
+  // kOriginKeyedProcessesByDefault feature and the
+  // kOriginAgentClusterDefaultEnabled feature.
   //
   // If |origin| has already been registered as isolated for the same
-  // BrowsingInstance amd the same value of |requires_origin_keyed_process|,
-  // then nothing will be changed by this call.
-  void AddOriginIsolationStateForBrowsingInstance(
+  // BrowsingInstance, then nothing will be changed by this call.
+  void AddOriginAgentClusterStateForBrowsingInstance(
       const IsolationContext& isolation_context,
       const url::Origin& origin,
-      bool is_origin_agent_cluster,
-      bool requires_origin_keyed_process);
+      const OriginAgentClusterIsolationState& oac_isolation_state);
 
   // Adds `origin` to the IsolatedOrigins list for only the BrowsingInstance of
   // `isolation_context`, without isolating all subdomains. For use when the
@@ -359,6 +344,20 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
       bool requests_origin_keyed_process,
       const GURL& site_url,
       url::Origin* result);
+
+  // Stores the v8-optimization state for the passed-in `browsing_instance_id`
+  // and `process_lock_origin` if the state isn't already cached.
+  void AddV8OptimizationDisabledStateForOriginIfNotCached(
+      const BrowsingInstanceId& browsing_instance_id,
+      const url::Origin& process_lock_origin,
+      bool are_v8_optimizations_disabled);
+
+  // Returns whether v8-optimization should be disabled for the passed-in
+  // (`browsing_instance_id`, `process_lock_origin`) pair. Returns std::nullopt
+  // if there is no cached v8-optimization verdict.
+  std::optional<bool> LookupAreV8OptimizationsDisabled(
+      const BrowsingInstanceId& browsing_instance_id,
+      const url::Origin& process_lock_origin);
 
   // Returns if |child_id| can read all of the |files|.
   bool CanReadAllFiles(int child_id, const std::vector<base::FilePath>& files);
@@ -511,10 +510,10 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                                           int policy);
 
   // Returns true if sending MIDI messages is allowed.
-  bool CanSendMidiMessage(int child_id);
+  bool CanSendMidiMessage(ChildProcessId child_id);
 
   // Returns true if sending system exclusive (SysEx) MIDI messages is allowed.
-  bool CanSendMidiSysExMessage(int child_id);
+  bool CanSendMidiSysExMessage(ChildProcessId child_id);
 
   // Remove all isolated origins associated with |browser_context| and clear any
   // pointers that may reference |browser_context|.  This is
@@ -675,7 +674,6 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                         bool applies_to_future_browsing_instances,
                         BrowsingInstanceId browsing_instance_id,
                         BrowserContext* browser_context,
-                        ResourceContext* resource_context,
                         bool isolate_all_subdomains,
                         IsolatedOriginSource source);
     // Copyable and movable.
@@ -689,12 +687,11 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
     bool operator<(const IsolatedOriginEntry& other) const {
       return std::tie(origin_, applies_to_future_browsing_instances_,
                       browsing_instance_id_, browser_context_,
-                      resource_context_, isolate_all_subdomains_, source_) <
+                      isolate_all_subdomains_, source_) <
              std::tie(other.origin_,
                       other.applies_to_future_browsing_instances_,
                       other.browsing_instance_id_, other.browser_context_,
-                      other.resource_context_, other.isolate_all_subdomains_,
-                      source_);
+                      other.isolate_all_subdomains_, source_);
     }
 
     bool operator==(const IsolatedOriginEntry& other) const {
@@ -703,7 +700,6 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                  other.applies_to_future_browsing_instances_ &&
              browsing_instance_id_ == other.browsing_instance_id_ &&
              browser_context_ == other.browser_context_ &&
-             resource_context_ == other.resource_context_ &&
              isolate_all_subdomains_ == other.isolate_all_subdomains_ &&
              source_ == other.source_;
     }
@@ -712,10 +708,9 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
     bool AppliesToAllBrowserContexts() const;
 
     // True if (1) this entry is associated with the same profile as
-    // |browser_or_resource_context|, or (2) this entry applies to all
-    // profiles.  May be used on UI or IO threads.
-    bool MatchesProfile(
-        const BrowserOrResourceContext& browser_or_resource_context) const;
+    // |browser_context|, or (2) this entry applies to all profiles.  May be
+    // used on UI or IO threads.
+    bool MatchesProfile(BrowserContext* browser_context) const;
 
     // True if this entry applies to the BrowsingInstance specified by
     // `browsing_instance_id`.  See `applies_to_future_browsing_instances_` and
@@ -758,11 +753,9 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
     BrowsingInstanceId browsing_instance_id_;
 
     // Optional information about the profile where the isolated origin
-    // applies.  |browser_context_| may be used on the UI thread, and
-    // |resource_context_| may be used on the IO thread.  If these are null,
+    // applies. This may only be used on the UI thread. If this is null,
     // then the isolated origin applies globally to all profiles.
     raw_ptr<BrowserContext> browser_context_;
-    raw_ptr<ResourceContext> resource_context_;
 
     // True if origins at this or lower level should be treated as distinct
     // isolated origins, effectively isolating all domains below a given domain,
@@ -869,8 +862,8 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   void RemoveProcessReferenceLocked(int child_id)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
-  // Internal helper for RemoveOptInIsolatedOriginsForBrowsingInstance().
-  void RemoveOptInIsolatedOriginsForBrowsingInstanceInternal(
+  // Internal helper for RemoveAllStateForBrowsingInstance().
+  void RemoveAllStateForBrowsingInstanceInternal(
       const BrowsingInstanceId browsing_instance_id);
 
   // Creates the value to place in the "killed_process_origin_lock" crash key
@@ -1008,8 +1001,6 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   //   2. Optionally, which BrowserContext (profile) it applies to.  When the
   //      |browser_context| field in the IsolatedOriginEntry is non-null, a
   //      particular isolated origin entry only applies to that BrowserContext.
-  //      A ResourceContext, BrowserContext's representation on the IO thread,
-  //      is also stored in the entry to facilitate checks on the IO thread.
   //      Note that the same origin may be isolated in different profiles,
   //      possibly with different BrowsingInstance ID cut-offs.  For example:
   //        https://foo.com -> { [https://test.foo.com profile1 4],
@@ -1040,15 +1031,30 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
           GUARDED_BY(origins_isolation_opt_in_lock_);
 
   // A map to track origins that have been isolated within a given
-  // BrowsingInstance, or that have been loaded in a BrowsingInstance
-  // without isolation, but that have requested isolation in at least one other
+  // BrowsingInstance, or that have been loaded in a BrowsingInstance without
+  // isolation, but that have requested isolation in at least one other
   // BrowsingInstance. Origins loaded without isolation are tracked to make sure
   // we don't try to isolate the origin in the associated BrowsingInstance at a
   // later time, in order to keep the isolation consistent over the lifetime of
   // the BrowsingInstance.
+  //
+  // Note that this map does not currently distinguish between a non-sandboxed
+  // origin and a precursor of a sandboxed origin, even though that's not
+  // technically necessary. See https://crbug.com/446157743 and
+  // https://crbug.com/40910871.
   base::flat_map<BrowsingInstanceId, std::vector<OriginAgentClusterOptInEntry>>
       origin_isolation_by_browsing_instance_
           GUARDED_BY(origins_isolation_opt_in_lock_);
+
+  base::Lock are_v8_optimizations_disabled_lock_;
+
+  // A map of BrowsingInstances and process-lock-origins to v8-optimization
+  // verdicts. The purpose of the map is to ensure that changes in the return
+  // value of ContentBrowserClient::AreV8OptimizationsDisabledForSite() only
+  // affect process reuse decisions for future BrowsingInstances.
+  base::flat_map<BrowsingInstanceId, base::flat_map<url::Origin, bool>>
+      are_v8_optimizations_disabled_map_
+          GUARDED_BY(are_v8_optimizations_disabled_lock_);
 
   // When we are notified a BrowsingInstance has destructed, delay cleanup by
   // this amount to allow outstanding IO thread requests to complete. May be set

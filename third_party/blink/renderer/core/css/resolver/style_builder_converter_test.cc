@@ -6,6 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/css/css_color_mix_value.h"
+#include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_relative_color_value.h"
 
 namespace blink {
@@ -38,7 +39,7 @@ TEST(StyleBuilderConverterTest,
           StyleColor(), 0.5f, 1.));
 
   const ResolveColorValueContext context{
-      .length_resolver = CSSToLengthConversionData(),
+      .conversion_data = CSSToLengthConversionData(/*element=*/nullptr),
       .text_link_colors = TextLinkColors()};
   EXPECT_EQ(ResolveColorValue(*color_mix_value, context), expected);
 }
@@ -69,7 +70,7 @@ TEST(StyleBuilderConverterTest,
           StyleColor(), 0.5f, 1.));
 
   const ResolveColorValueContext context{
-      .length_resolver = CSSToLengthConversionData(),
+      .conversion_data = CSSToLengthConversionData(/*element=*/nullptr),
       .text_link_colors = TextLinkColors()};
   EXPECT_EQ(ResolveColorValue(*color_mix_value, context), expected);
 }

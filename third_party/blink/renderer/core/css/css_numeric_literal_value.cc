@@ -6,6 +6,7 @@
 
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/css/css_length_resolver.h"
+#include "third_party/blink/renderer/core/css/css_value_clamping_utils.h"
 #include "third_party/blink/renderer/core/css/css_value_pool.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
@@ -139,13 +140,17 @@ int CSSNumericLiteralValue::ComputeInteger() const {
 }
 
 double CSSNumericLiteralValue::ComputeNumber() const {
-  DCHECK(IsNumber());
-  return ClampTo<double>(num_);
+  DCHECK(IsNumber() || IsPercentage());
+  if (IsPercentage()) {
+    return ClampTo<double>(num_ / 100.0);
+  } else {
+    return ClampTo<double>(num_);
+  }
 }
 
 double CSSNumericLiteralValue::ComputePercentage() const {
   DCHECK(IsPercentage());
-  return ClampTo<double>(num_);
+  return CSSValueClampingUtils::ClampDouble(num_);
 }
 
 bool CSSNumericLiteralValue::AccumulateLengthArray(CSSLengthArray& length_array,
@@ -194,7 +199,7 @@ static String FormatNumber(double number, const char* suffix) {
   return result;
 }
 
-static String FormatInfinityOrNaN(double number, const char* suffix) {
+static String FormatInfinityOrNaN(double number, StringView suffix) {
   String result;
   if (std::isinf(number)) {
     if (number > 0) {
@@ -208,8 +213,8 @@ static String FormatInfinityOrNaN(double number, const char* suffix) {
     result = "NaN";
   }
 
-  if (strlen(suffix) > 0) {
-    result = result + String::Format(" * 1%s", suffix);
+  if (suffix.length() > 0) {
+    result = StrCat({result, " * 1", suffix});
   }
   return result;
 }
@@ -300,14 +305,15 @@ String CSSNumericLiteralValue::CustomCSSText() const {
         if (!std::isfinite(value)) {
           text = FormatInfinityOrNaN(value, UnitTypeToString(GetType()));
         } else {
-          text = FormatNumber(value, UnitTypeToString(GetType()));
+          text =
+              FormatNumber(value, UnitTypeToString(GetType()).Utf8().c_str());
         }
       } else {
         StringBuilder builder;
         int int_value = value;
-        const char* unit_type = UnitTypeToString(GetType());
+        StringView unit_type = UnitTypeToString(GetType());
         builder.AppendNumber(int_value);
-        builder.Append(unit_type, static_cast<unsigned>(strlen(unit_type)));
+        builder.Append(unit_type);
         text = builder.ReleaseString();
       }
     } break;
@@ -369,8 +375,7 @@ bool CSSNumericLiteralValue::Equals(const CSSNumericLiteralValue& other) const {
 
 unsigned CSSNumericLiteralValue::CustomHash() const {
   uint64_t val = base::bit_cast<uint64_t>(num_);
-  return WTF::HashInts(static_cast<unsigned>(GetType()),
-                       WTF::HashInts(val >> 32, val));
+  return HashInts(static_cast<unsigned>(GetType()), HashInts(val >> 32, val));
 }
 
 CSSPrimitiveValue::UnitType CSSNumericLiteralValue::CanonicalUnit() const {

@@ -32,9 +32,8 @@ namespace blink {
 
 namespace {
 
-bool IsNGBlockFragmentationRoot(const LayoutBlockFlow* block_flow) {
-  return block_flow && block_flow->IsFragmentationContextRoot() &&
-         block_flow->IsLayoutNGObject();
+bool IsBlockFragmentationRoot(const LayoutBlockFlow* block_flow) {
+  return block_flow && block_flow->IsFragmentationContextRoot();
 }
 
 gfx::Vector2d ToRoundedVector2d(const LogicalOffset& o) {
@@ -57,7 +56,7 @@ LogicalOffset ToLogicalOffset(const gfx::PointF& point,
 }  // anonymous namespace
 
 // With 100 unique strings, a 2^12 slot table has a false positive rate of ~2%.
-using ClassnameFilter = CountingBloomFilter<12>;
+using ClassnameFilter = BloomFilter<12>;
 using Corner = ScrollAnchor::Corner;
 
 SerializedAnchor::SerializedAnchor(const ScrollAnchorData& data,
@@ -250,27 +249,28 @@ static const String UniqueSimpleSelectorAmongSiblings(Element* element) {
   if (element->HasClass()) {
     AtomicString unique_classname = UniqueClassnameAmongSiblings(element);
     if (!unique_classname.empty()) {
-      return AtomicString(".") + unique_classname;
+      return StrCat({".", unique_classname});
     }
   }
 
-  return ":nth-child(" +
-         String::Number(NthIndexCache::NthChildIndex(
-             *element, /*filter=*/nullptr, /*selector_checker=*/nullptr,
-             /*context=*/nullptr)) +
-         ")";
+  return StrCat({":nth-child(",
+                 String::Number(NthIndexCache::NthChildIndex(
+                     *element, /*filter=*/nullptr, /*selector_checker=*/nullptr,
+                     /*context=*/nullptr)),
+                 ")"});
 }
 
-// Computes a selector that uniquely identifies |anchor_node|. This is done
+// Computes a selector that uniquely identifies |anchor_object|. This is done
 // by computing a selector that uniquely identifies each ancestor among its
 // sibling elements, terminating at a definitively unique ancestor. The
 // definitively unique ancestor is either the first ancestor with an id or
 // the root of the document. The computed selectors are chained together with
 // the child combinator(>) to produce a compound selector that is
-// effectively a path through the DOM tree to |anchor_node|.
-static const String ComputeUniqueSelector(Node* anchor_node) {
+// effectively a path through the DOM tree to the node of |anchor_object|.
+static const String ComputeUniqueSelector(LayoutObject* anchor_object) {
+  Node* anchor_node = anchor_object->GetNode();
   DCHECK(anchor_node);
-  // The scroll anchor can be a pseudo element, but pseudo elements aren't part
+  // The scroll anchor can be a pseudo-element, but pseudo-elements aren't part
   // of the DOM and can't be used as part of a selector. We fail in this case;
   // success isn't possible.
   if (anchor_node->IsPseudoElement()) {
@@ -402,8 +402,17 @@ bool ScrollAnchor::FindAnchorInPriorityCandidates() {
     if (candidate) {
       result = ExaminePriorityCandidate(candidate);
       if (IsViable(result.status)) {
+        // Start with the candidate object.
         anchor_object_ = candidate;
         corner_ = result.corner;
+
+        // Run the selection algorithm with the priority candidate as the root.
+        // This would override the anchor_object_ if there is a better
+        // alternative.
+        if (RuntimeEnabledFeatures::
+                ScrollAnchorPriorityCandidateSubtreeEnabled()) {
+          FindAnchorRecursive(candidate);
+        }
         return true;
       }
     }
@@ -414,8 +423,16 @@ bool ScrollAnchor::FindAnchorInPriorityCandidates() {
       PriorityCandidateFromNode(document.GetFindInPageActiveMatchNode());
   result = ExaminePriorityCandidate(candidate);
   if (IsViable(result.status)) {
+    // Start with the candidate object.
     anchor_object_ = candidate;
     corner_ = result.corner;
+
+    // Run the selection algorithm with the priority candidate as the root.
+    // This would override the anchor_object_ if there is a better
+    // alternative.
+    if (RuntimeEnabledFeatures::ScrollAnchorPriorityCandidateSubtreeEnabled()) {
+      FindAnchorRecursive(candidate);
+    }
     return true;
   }
   return false;
@@ -467,7 +484,7 @@ ScrollAnchor::WalkStatus ScrollAnchor::FindAnchorRecursive(
     return status;
 
   bool is_block_fragmentation_context_root =
-      IsNGBlockFragmentationRoot(DynamicTo<LayoutBlockFlow>(candidate));
+      IsBlockFragmentationRoot(DynamicTo<LayoutBlockFlow>(candidate));
 
   for (LayoutObject* child = candidate->SlowFirstChild(); child;
        child = child->NextSibling()) {
@@ -514,7 +531,7 @@ ScrollAnchor::WalkStatus ScrollAnchor::FindAnchorInOOFs(
   // the LayoutObject associated with the fragment will be set to nullptr, so we
   // need to check for that.
   bool is_block_fragmentation_context_root =
-      IsNGBlockFragmentationRoot(DynamicTo<LayoutBlockFlow>(layout_block));
+      IsBlockFragmentationRoot(DynamicTo<LayoutBlockFlow>(layout_block));
   for (const PhysicalBoxFragment& fragment :
        layout_block->PhysicalFragments()) {
     if (!fragment.HasOutOfFlowFragmentChild() &&
@@ -536,7 +553,8 @@ ScrollAnchor::WalkStatus ScrollAnchor::FindAnchorInOOFs(
         continue;
 
       // Look for OOFs inside a fragmentainer.
-      for (const PhysicalFragmentLink& grandchild : child->Children()) {
+      for (const PhysicalFragmentLink& grandchild :
+           To<PhysicalBoxFragment>(child.get())->Children()) {
         if (!grandchild->IsOutOfFlowPositioned())
           continue;
         LayoutObject* layout_object = grandchild->GetMutableLayoutObject();
@@ -701,7 +719,8 @@ void ScrollAnchor::Adjust() {
   TRACE_EVENT_INSTANT(TRACE_DISABLED_BY_DEFAULT("blink.debug"), "Adjust",
                       "new_offset", new_offset.ToString());
 
-  scroller_->SetScrollOffset(new_offset, mojom::blink::ScrollType::kAnchoring);
+  scroller_->SetScrollOffset(new_offset, mojom::blink::ScrollType::kAnchoring,
+                             cc::ScrollSourceType::kStationaryScroll);
 
   UseCounter::Count(ScrollerLayoutBox(scroller_)->GetDocument(),
                     WebFeature::kScrollAnchored);
@@ -778,14 +797,16 @@ bool ScrollAnchor::RestoreAnchor(const SerializedAnchor& serialized_anchor) {
                         "RestoreAnchor", "anchor_object",
                         anchor_object->DebugName());
     scroller_->SetScrollOffset(desired_offset,
-                               mojom::blink::ScrollType::kAnchoring);
+                               mojom::blink::ScrollType::kAnchoring,
+                               cc::ScrollSourceType::kStationaryScroll);
     FindAnchor();
 
     // If the above FindAnchor call failed, reset the scroll position and try
     // again with the next found element.
     if (!anchor_object_) {
       scroller_->SetScrollOffset(current_offset,
-                                 mojom::blink::ScrollType::kAnchoring);
+                                 mojom::blink::ScrollType::kAnchoring,
+                                 cc::ScrollSourceType::kStationaryScroll);
       continue;
     }
 
@@ -806,16 +827,11 @@ const SerializedAnchor ScrollAnchor::GetSerializedAnchor() {
     scroller_box->GetDocument().GetStyleEngine().UpdateActiveStyle();
   }
 
-  // It's safe to return saved_selector_ before checking anchor_object_, since
-  // clearing anchor_object_ also clears saved_selector_.
-  if (!saved_selector_.empty()) {
-    DCHECK(anchor_object_);
-    return SerializedAnchor(
-        saved_selector_,
-        ComputeRelativeOffset(anchor_object_, scroller_, corner_));
-  }
-
   if (!anchor_object_) {
+    // If there's no anchor_object_, there should also be no saved_selector_,
+    // because those are cleared together.
+    DCHECK(saved_selector_.empty());
+
     FindAnchor();
     if (!anchor_object_)
       return SerializedAnchor();
@@ -823,10 +839,10 @@ const SerializedAnchor ScrollAnchor::GetSerializedAnchor() {
 
   DCHECK(anchor_object_->GetNode());
   SerializedAnchor new_anchor(
-      ComputeUniqueSelector(anchor_object_->GetNode()),
+      saved_selector_ ? saved_selector_ : ComputeUniqueSelector(anchor_object_),
       ComputeRelativeOffset(anchor_object_, scroller_, corner_));
 
-  if (new_anchor.IsValid()) {
+  if (saved_selector_.empty() && new_anchor.IsValid()) {
     saved_selector_ = new_anchor.selector;
   }
 

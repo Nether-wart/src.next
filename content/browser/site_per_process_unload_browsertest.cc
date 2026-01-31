@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <list>
 #include <memory>
 #include <string>
@@ -13,7 +14,7 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/ranges/algorithm.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/run_until.h"
@@ -459,13 +460,13 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessBrowserTest, PagehideHandlerSubframes) {
   // https://html.spec.whatwg.org/multipage/browsing-the-web.html#unloading-documents
   //
   // In process B:
-  auto B1 = base::ranges::find(messages, "B1");
-  auto B2 = base::ranges::find(messages, "B2");
+  auto B1 = std::ranges::find(messages, "B1");
+  auto B2 = std::ranges::find(messages, "B2");
   EXPECT_LT(B1, B2);
 
   // In process C:
-  auto C2 = base::ranges::find(messages, "C2");
-  auto C3 = base::ranges::find(messages, "C3");
+  auto C2 = std::ranges::find(messages, "C2");
+  auto C3 = std::ranges::find(messages, "C3");
   EXPECT_LT(C2, C3);
 
   // Make sure the processes are deleted at some point.
@@ -548,10 +549,10 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessBrowserTest, PagehideHandlerABAB) {
   EXPECT_FALSE(dom_message_queue.PopMessage(&message));
 
   EXPECT_THAT(messages, WhenSorted(ElementsAre("A1", "A2", "B1", "B2")));
-  auto A1 = base::ranges::find(messages, "A1");
-  auto A2 = base::ranges::find(messages, "A2");
-  auto B1 = base::ranges::find(messages, "B1");
-  auto B2 = base::ranges::find(messages, "B2");
+  auto A1 = std::ranges::find(messages, "A1");
+  auto A2 = std::ranges::find(messages, "A2");
+  auto B1 = std::ranges::find(messages, "B1");
+  auto B2 = std::ranges::find(messages, "B2");
   EXPECT_LT(A1, A2);
   EXPECT_LT(B1, B2);
 
@@ -820,18 +821,18 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessBrowserTest,
 
   EXPECT_FALSE(delete_a0.deleted());
   EXPECT_FALSE(delete_a1.deleted());
-  EXPECT_TRUE(delete_a2.deleted());
+  EXPECT_TRUE(delete_a2.WaitUntilDeleted());
   EXPECT_FALSE(delete_a3.deleted());
-  EXPECT_TRUE(delete_a4.deleted());
+  EXPECT_TRUE(delete_a4.WaitUntilDeleted());
   EXPECT_FALSE(delete_a5.deleted());
   EXPECT_FALSE(delete_a6.deleted());
-  EXPECT_TRUE(delete_a7.deleted());
-  EXPECT_TRUE(delete_a8.deleted());
-  EXPECT_TRUE(delete_a9.deleted());
-  EXPECT_TRUE(delete_a10.deleted());
-  EXPECT_TRUE(delete_a11.deleted());
+  EXPECT_TRUE(delete_a7.WaitUntilDeleted());
+  EXPECT_TRUE(delete_a8.WaitUntilDeleted());
+  EXPECT_TRUE(delete_a9.WaitUntilDeleted());
+  EXPECT_TRUE(delete_a10.WaitUntilDeleted());
+  EXPECT_TRUE(delete_a11.WaitUntilDeleted());
   EXPECT_FALSE(delete_a12.deleted());
-  EXPECT_TRUE(delete_a13.deleted());
+  EXPECT_TRUE(delete_a13.WaitUntilDeleted());
   EXPECT_FALSE(delete_a14.deleted());
 }
 

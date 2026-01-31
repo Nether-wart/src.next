@@ -35,30 +35,34 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/platform/forward_declared_member.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
-class ExceptionState;
-class StructuredSerializeOptions;
-class ScriptState;
-class ScriptValue;
+class GlobalCrypto;
 
-class CORE_EXPORT WindowOrWorkerGlobalScope {
+class CORE_EXPORT WindowOrWorkerGlobalScope : public GarbageCollectedMixin {
  public:
-  void reportError(ScriptState*, const ScriptValue&);
-  String btoa(const String& string_to_encode, ExceptionState&);
-  String atob(const String& encoded_string, ExceptionState&);
   bool crossOriginIsolated();
   String crossOriginEmbedderPolicy();
-  ScriptValue structuredClone(ScriptState*,
-                              const ScriptValue& message,
-                              const StructuredSerializeOptions*,
-                              ExceptionState&);
+
+  ForwardDeclaredMember<GlobalCrypto> GetGlobalCrypto() const {
+    return global_crypto_;
+  }
+  void SetGlobalCrypto(ForwardDeclaredMember<GlobalCrypto> global_crypto) {
+    global_crypto_ = global_crypto;
+  }
+
+  void Trace(Visitor*) const override;
 
  protected:
   virtual ExecutionContext* GetExecutionContext() const = 0;
+
+ private:
+  ForwardDeclaredMember<GlobalCrypto> global_crypto_;
 };
 
 }  // namespace blink

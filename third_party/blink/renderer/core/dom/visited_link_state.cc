@@ -111,10 +111,7 @@ static inline LinkHash LinkHashForElement(
     const AtomicString& attribute = AtomicString()) {
   DCHECK(attribute.IsNull() || LinkAttribute(element) == attribute);
   return base::FeatureList::IsEnabled(
-             blink::features::kPartitionVisitedLinkDatabase) ||
-                 base::FeatureList::IsEnabled(
-                     blink::features::
-                         kPartitionVisitedLinkDatabaseWithSelfLinks)
+             blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks)
              ? PartitionedLinkHashForElement(element, attribute)
              : UnpartitionedLinkHashForElement(element, attribute);
 }
@@ -192,8 +189,6 @@ EInsideLink VisitedLinkState::DetermineLinkStateSlowCase(
   // Cache the feature status to avoid frequent calculation.
   static const bool are_partitioned_visited_links_enabled =
       base::FeatureList::IsEnabled(
-          blink::features::kPartitionVisitedLinkDatabase) ||
-      base::FeatureList::IsEnabled(
           blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks);
 
   if (are_partitioned_visited_links_enabled) {
@@ -210,13 +205,8 @@ EInsideLink VisitedLinkState::DetermineLinkStateSlowCase(
     // inside Fenced Frames or any frame which has a Fenced Frame in its
     // FrameTree.
     if (GetDocument().GetFrame()->IsInFencedFrameTree()) {
-      UMA_HISTOGRAM_BOOLEAN("Blink.History.VisitedLinks.InFencedFrameTree",
-                            true);
       return EInsideLink::kNotInsideLink;
     }
-    // Record in our histogram that we are not in or a child of a Fenced Frame.
-    UMA_HISTOGRAM_BOOLEAN("Blink.History.VisitedLinks.InFencedFrameTree",
-                          false);
   }
 
   // An empty attribute refers to the document itself which is always
@@ -224,22 +214,16 @@ EInsideLink VisitedLinkState::DetermineLinkStateSlowCase(
   // links can be tested in platform independent manner, without
   // explicit support in the test harness.
   if (attribute.empty()) {
-    base::UmaHistogramBoolean(
-        "Blink.History.VisitedLinks.IsLinkStyledAsVisited", true);
     return EInsideLink::kInsideVisitedLink;
   }
 
   if (LinkHash hash = LinkHashForElement(element, attribute)) {
     links_checked_for_visited_state_.insert(hash);
     if (Platform::Current()->IsLinkVisited(hash)) {
-      base::UmaHistogramBoolean(
-          "Blink.History.VisitedLinks.IsLinkStyledAsVisited", true);
       return EInsideLink::kInsideVisitedLink;
     }
   }
 
-  base::UmaHistogramBoolean("Blink.History.VisitedLinks.IsLinkStyledAsVisited",
-                            false);
   return EInsideLink::kInsideUnvisitedLink;
 }
 
