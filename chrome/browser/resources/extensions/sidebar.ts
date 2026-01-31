@@ -1,6 +1,7 @@
 // Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import 'chrome://resources/cr_elements/cr_ripple/cr_ripple.js';
 import './icons.html.js';
@@ -44,6 +45,7 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
   static override get properties() {
     return {
       enableEnhancedSiteControls: {type: Boolean},
+      inDevMode: {type: Boolean},
 
       /**
        * The data path/page that identifies the entry to be selected in the
@@ -54,8 +56,9 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
     };
   }
 
-  enableEnhancedSiteControls: boolean = false;
-  protected selectedPath_: Page = Page.LIST;
+  accessor enableEnhancedSiteControls: boolean = false;
+  protected accessor selectedPath_: Page = Page.LIST;
+  accessor inDevMode: boolean = false;
 
   /**
    * The ID of the listener on |navigation|. Stored so that the
@@ -116,6 +119,14 @@ export class ExtensionsSidebarElement extends ExtensionsSidebarElementBase {
       tags: ['a'],
       attrs: ['target'],
       substitutions: [loadTimeData.getString('getMoreExtensionsUrl')],
+    });
+  }
+
+  protected computeDocsPromoText_(): TrustedHTML {
+    return this.i18nAdvanced('sidebarDocsPromo', {
+      tags: ['a'],
+      attrs: ['target'],
+      substitutions: [loadTimeData.getString('extensionsWhatsNewURL')],
     });
   }
 }

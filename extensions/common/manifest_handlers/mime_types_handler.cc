@@ -6,10 +6,11 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+
 #include "base/containers/contains.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -28,30 +29,14 @@ namespace {
 // This has to by in sync with MimeHandlerType enum.
 // Note that if multiple versions of quickoffice are installed, the
 // higher-indexed entry will clobber earlier entries.
-const char* kMIMETypeHandlersAllowlist[] = {
+constexpr const char* kMIMETypeHandlersAllowlist[] = {
     extension_misc::kPdfExtensionId,
+#if BUILDFLAG(IS_CHROMEOS)
     extension_misc::kQuickOfficeComponentExtensionId,
+#endif
     extension_misc::kQuickOfficeInternalExtensionId,
     extension_misc::kQuickOfficeExtensionId,
     extension_misc::kMimeHandlerPrivateTestExtensionId};
-
-// Used for UMA stats. Entries should not be renumbered and numeric values
-// should never be reused. This corresponds to kMimeTypeHandlersAllowlist.
-// Don't forget to update enums.xml when updating these.
-enum class MimeHandlerType {
-  kPdfExtension = 0,
-  kQuickOfficeComponentExtension = 1,
-  kQuickOfficeInternalExtension = 2,
-  kQuickOfficeExtension = 3,
-  kTestExtension = 4,
-
-  kMaxValue = kTestExtension,
-};
-
-static_assert(
-    std::size(kMIMETypeHandlersAllowlist) ==
-        static_cast<size_t>(MimeHandlerType::kMaxValue) + 1,
-    "MimeHandlerType enum is not in sync with kMIMETypeHandlersAllowlist.");
 
 constexpr SkColor kQuickOfficeExtensionBackgroundColor =
     SkColorSetRGB(241, 241, 241);
@@ -70,10 +55,11 @@ MimeTypesHandlerInfo::~MimeTypesHandlerInfo() = default;
 }  // namespace
 
 // static
-const std::vector<std::string>& MimeTypesHandler::GetMIMETypeAllowlist() {
-  static base::NoDestructor<std::vector<std::string>> allowlist_vector{
-      std::begin(kMIMETypeHandlersAllowlist),
-      std::end(kMIMETypeHandlersAllowlist)};
+const std::vector<extensions::ExtensionId>&
+MimeTypesHandler::GetMIMETypeAllowlist() {
+  static base::NoDestructor<std::vector<extensions::ExtensionId>>
+      allowlist_vector{std::begin(kMIMETypeHandlersAllowlist),
+                       std::end(kMIMETypeHandlersAllowlist)};
   return *allowlist_vector;
 }
 
@@ -115,16 +101,14 @@ MimeTypesHandler* MimeTypesHandler::GetHandler(
     const extensions::Extension* extension) {
   MimeTypesHandlerInfo* info = static_cast<MimeTypesHandlerInfo*>(
       extension->GetManifestData(keys::kMimeTypesHandler));
-  if (info)
+  if (info) {
     return &info->handler_;
+  }
   return nullptr;
 }
 
-MimeTypesHandlerParser::MimeTypesHandlerParser() {
-}
-
-MimeTypesHandlerParser::~MimeTypesHandlerParser() {
-}
+MimeTypesHandlerParser::MimeTypesHandlerParser() = default;
+MimeTypesHandlerParser::~MimeTypesHandlerParser() = default;
 
 bool MimeTypesHandlerParser::Parse(extensions::Extension* extension,
                                    std::u16string* error) {

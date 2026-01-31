@@ -55,8 +55,13 @@ std::map<std::string, AdaptiveToolbarButtonVariant> GetEnumLabelMapping() {
                AdaptiveToolbarButtonVariant::kAddToBookmarks,
            },
            {
+
                segmentation_platform::kAdaptiveToolbarModelLabelReadAloud,
                AdaptiveToolbarButtonVariant::kReadAloud,
+           },
+           {
+               segmentation_platform::kAdaptiveToolbarModelLabelOpenInBrowser,
+               AdaptiveToolbarButtonVariant::kOpenInBrowser,
            }});
 
   return *enum_label_mapping;
@@ -194,7 +199,7 @@ void RunJavaCallbackWithRankedButtons(
 
 }  // namespace
 
-void JNI_AdaptiveToolbarBridge_GetRankedSessionVariantButtons(
+static void JNI_AdaptiveToolbarBridge_GetRankedSessionVariantButtons(
     JNIEnv* env,
     Profile* profile,
     jboolean j_use_raw_results,
@@ -207,7 +212,7 @@ void JNI_AdaptiveToolbarBridge_GetRankedSessionVariantButtons(
                                                    std::move(wrapped_callback));
 }
 
-void JNI_AdaptiveToolbarBridge_GetSessionVariantButton(
+static void JNI_AdaptiveToolbarBridge_GetSessionVariantButton(
     JNIEnv* env,
     Profile* profile,
     const JavaParamRef<jobject>& j_callback) {
@@ -296,3 +301,5 @@ void GetRankedSessionVariantButtons(
   }
 }
 }  // namespace adaptive_toolbar
+
+DEFINE_JNI(AdaptiveToolbarBridge)

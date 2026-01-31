@@ -26,7 +26,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_FOCUS_CONTROLLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_FOCUS_CONTROLLER_H_
 
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -42,7 +41,6 @@ class Document;
 class Element;
 class FocusChangedObserver;
 class Frame;
-class HTMLElement;
 class HTMLFrameOwnerElement;
 class InputDeviceCapabilities;
 class LocalFrame;
@@ -86,8 +84,9 @@ class CORE_EXPORT FocusController final
       RemoteFrame* from,
       LocalFrame* to,
       InputDeviceCapabilities* source_capabilities = nullptr);
-  static Element* FindFocusableElementInShadowHost(const Element& shadow_host);
-  static HTMLElement* FindScopeOwnerSlotOrReadingFlowContainer(const Element&);
+
+  static Element* FindScopeOwnerSlotOrScrollMarkerOrReadingFlowContainer(
+      const Element&);
 
   // Returns the next focusable element (likely an <input> field) after the
   // given element in focus traversal and within the enclosing <form> that
@@ -98,7 +97,9 @@ class CORE_EXPORT FocusController final
   // next focusable element.
   Element* NextFocusableElementForImeAndAutofill(Element*,
                                                  mojom::blink::FocusType);
-  Element* FindFocusableElementAfter(Element& element, mojom::blink::FocusType);
+  Element* FindFocusableElementForImeAutofillAndTesting(mojom::blink::FocusType,
+                                                        Element&,
+                                                        OwnerMap&);
 
   bool SetFocusedElement(Element*, Frame*, const FocusParams&);
   // |setFocusedElement| variant with SelectionBehaviorOnFocus::None,
@@ -113,6 +114,8 @@ class CORE_EXPORT FocusController final
 
   void SetFocusEmulationEnabled(bool);
 
+  void UpdateFocusOnNavigationCommit(Frame*, bool was_focused);
+
   void RegisterFocusChangedObserver(FocusChangedObserver*);
 
   static int AdjustedTabIndex(const Element&);
@@ -120,8 +123,6 @@ class CORE_EXPORT FocusController final
   void Trace(Visitor*) const;
 
  private:
-  Element* FindFocusableElement(mojom::blink::FocusType, Element&, OwnerMap&);
-
   bool AdvanceFocus(mojom::blink::FocusType,
                     bool initial_focus,
                     InputDeviceCapabilities* source_capabilities = nullptr);

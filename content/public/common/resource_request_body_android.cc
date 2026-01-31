@@ -23,7 +23,7 @@ namespace content {
 
 namespace {
 
-base::android::ScopedJavaLocalRef<jbyteArray>
+static base::android::ScopedJavaLocalRef<jbyteArray>
 JNI_ResourceRequestBody_ConvertResourceRequestBodyToJavaArray(
     JNIEnv* env,
     const network::ResourceRequestBody& body) {
@@ -33,7 +33,7 @@ JNI_ResourceRequestBody_ConvertResourceRequestBodyToJavaArray(
 
 }  // namespace
 
-base::android::ScopedJavaLocalRef<jbyteArray>
+static base::android::ScopedJavaLocalRef<jbyteArray>
 JNI_ResourceRequestBody_CreateResourceRequestBodyFromBytes(
     JNIEnv* env,
     const JavaParamRef<jbyteArray>& j_post_data) {
@@ -44,8 +44,7 @@ JNI_ResourceRequestBody_CreateResourceRequestBodyFromBytes(
   std::vector<uint8_t> post_data;
   base::android::JavaByteArrayToByteVector(env, j_post_data, &post_data);
   scoped_refptr<network::ResourceRequestBody> body =
-      network::ResourceRequestBody::CreateFromBytes(
-          reinterpret_cast<const char*>(post_data.data()), post_data.size());
+      network::ResourceRequestBody::CreateFromBytes(std::move(post_data));
 
   return JNI_ResourceRequestBody_ConvertResourceRequestBodyToJavaArray(
       env, static_cast<const network::ResourceRequestBody&>(*body));
@@ -85,3 +84,5 @@ ExtractResourceRequestBodyFromJavaObject(
 }
 
 }  // namespace content
+
+DEFINE_JNI(ResourceRequestBody)

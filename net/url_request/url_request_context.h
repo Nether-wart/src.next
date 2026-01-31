@@ -16,11 +16,9 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/types/pass_key.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "net/base/net_export.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
@@ -28,6 +26,10 @@
 #include "net/net_buildflags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
+
+namespace unexportable_keys {
+class UnexportableKeyService;
+}
 
 namespace net {
 class CertVerifier;
@@ -61,12 +63,10 @@ class PersistentReportingAndNelStore;
 class ReportingService;
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
-#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 namespace device_bound_sessions {
 class SessionService;
 class SessionStore;
 }
-#endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 
 // Class that provides application-specific context for URLRequest
 // instances. May only be created by URLRequestContextBuilder.
@@ -89,10 +89,7 @@ class NET_EXPORT URLRequestContext final {
   // session.
   const HttpNetworkSessionContext* GetNetworkSessionContext() const;
 
-// TODO(crbug.com/40118868): Revisit once build flag switch of lacros-chrome is
-// complete.
-#if !BUILDFLAG(IS_WIN) && \
-    !(BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_LINUX)
   // This function should not be used in Chromium, please use the version with
   // NetworkTrafficAnnotationTag in the future.
   //
@@ -214,16 +211,31 @@ class NET_EXPORT URLRequestContext final {
   }
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
-#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
   // May return nullptr if the feature is disabled.
   device_bound_sessions::SessionStore* device_bound_session_store() const {
+#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
     return device_bound_session_store_.get();
+#else
+    return nullptr;
+#endif
   }
   // May return nullptr if the feature is disabled.
-  device_bound_sessions::SessionService* device_bound_session_service() const {
-    return device_bound_session_service_.get();
+  unexportable_keys::UnexportableKeyService* unexportable_key_service() const {
+#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+    return unexportable_key_service_.get();
+#else
+    return nullptr;
+#endif
   }
-#endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+
+  // May return nullptr if the feature is disabled.
+  device_bound_sessions::SessionService* device_bound_session_service() const {
+#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+    return device_bound_session_service_.get();
+#else
+    return nullptr;
+#endif
+  }
 
   bool enable_brotli() const { return enable_brotli_; }
 
@@ -247,14 +259,6 @@ class NET_EXPORT URLRequestContext final {
   // DEPRECATED: Do not use this even in tests. This is for a legacy use.
   void SetJobFactoryForTesting(const URLRequestJobFactory* job_factory) {
     job_factory_ = job_factory;
-  }
-
-  const std::optional<std::string>& cookie_deprecation_label() const {
-    return cookie_deprecation_label_;
-  }
-
-  void set_cookie_deprecation_label(const std::optional<std::string>& label) {
-    cookie_deprecation_label_ = label;
   }
 
  private:
@@ -326,6 +330,9 @@ class NET_EXPORT URLRequestContext final {
   void set_device_bound_session_service(
       std::unique_ptr<device_bound_sessions::SessionService>
           device_bound_session_service);
+  void set_unexportable_key_service(
+      std::unique_ptr<unexportable_keys::UnexportableKeyService>
+          unexportable_key_service);
 #endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 
   std::unique_ptr<HostResolver> host_resolver_;
@@ -375,6 +382,8 @@ class NET_EXPORT URLRequestContext final {
       url_requests_;
 
 #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+  std::unique_ptr<unexportable_keys::UnexportableKeyService>
+      unexportable_key_service_;
   std::unique_ptr<device_bound_sessions::SessionStore>
       device_bound_session_store_;
   std::unique_ptr<device_bound_sessions::SessionService>
@@ -392,8 +401,6 @@ class NET_EXPORT URLRequestContext final {
   // Triggers a DCHECK if a NetworkAnonymizationKey/IsolationInfo is not
   // provided to a request when true.
   bool require_network_anonymization_key_ = false;
-
-  std::optional<std::string> cookie_deprecation_label_;
 
   handles::NetworkHandle bound_network_;
 

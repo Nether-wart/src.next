@@ -11,6 +11,7 @@
 #include "base/check.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "build/buildflag.h"
@@ -212,10 +213,10 @@ ProxyServer ProxySchemeHostAndPortToProxyServer(
   url::Component password_component;
   url::Component hostname_component;
   url::Component port_component;
-  url::ParseAuthority(host_and_port.data(),
-                      url::Component(0, host_and_port.size()),
-                      &username_component, &password_component,
-                      &hostname_component, &port_component);
+  url::ParseAuthority(host_and_port, url::Component(0, host_and_port.size()),
+                      url::ParserMode::kSpecialURL, &username_component,
+                      &password_component, &hostname_component,
+                      &port_component);
   if (username_component.is_valid() || password_component.is_valid() ||
       hostname_component.is_empty()) {
     return ProxyServer();
@@ -266,11 +267,7 @@ ProxyServer::Scheme GetSchemeFromUriScheme(std::string_view scheme,
 ProxyChain MultiProxyUrisToProxyChain(std::string_view uris,
                                       ProxyServer::Scheme default_scheme,
                                       bool is_quic_allowed) {
-#if !BUILDFLAG(ENABLE_BRACKETED_PROXY_URIS)
-  // This function should not be called in non-debug modes.
-  CHECK(false);
-#endif  // !BUILDFLAG(ENABLE_BRACKETED_PROXY_URIS)
-
+#if BUILDFLAG(ENABLE_BRACKETED_PROXY_URIS)
   uris = HttpUtil::TrimLWS(uris);
   if (uris.empty()) {
     return ProxyChain();
@@ -307,5 +304,9 @@ ProxyChain MultiProxyUrisToProxyChain(std::string_view uris,
   }
 
   return ProxyChain(std::move(proxy_server_list));
+#else
+  // This function should not be called in non-debug modes.
+  NOTREACHED();
+#endif  // !BUILDFLAG(ENABLE_BRACKETED_PROXY_URIS)
 }
 }  // namespace net

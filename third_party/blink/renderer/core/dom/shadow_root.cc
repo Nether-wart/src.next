@@ -27,9 +27,12 @@
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/bindings/core/v8/module_request.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_css_style_sheet.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_observable_array_css_style_sheet.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_shadow_root_mode.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_slot_assignment_mode.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_stringlegacynulltoemptystring_trustedhtml.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
@@ -41,13 +44,21 @@
 #include "third_party/blink/renderer/core/dom/id_target_observer_registry.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment_engine.h"
+#include "third_party/blink/renderer/core/dom/space_split_string.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/dom/whitespace_attacher.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
+#include "third_party/blink/renderer/core/loader/modulescript/module_script_creation_params.h"
+#include "third_party/blink/renderer/core/loader/modulescript/module_script_fetch_request.h"
 #include "third_party/blink/renderer/core/sanitizer/sanitizer_api.h"
+#include "third_party/blink/renderer/core/script/modulator.h"
+#include "third_party/blink/renderer/core/script/module_script.h"
+#include "third_party/blink/renderer/core/script/value_wrapper_synthetic_module_script.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -77,7 +88,7 @@ class ReferenceTargetIdObserver : public IdTargetObserver {
 struct SameSizeAsShadowRoot : public DocumentFragment,
                               public TreeScope,
                               public ElementRareDataField {
-  Member<void*> member[3];
+  Member<void*> member[2];
   unsigned flags[1];
 };
 
@@ -123,31 +134,58 @@ void ShadowRoot::DidChangeHostChildSlotName(const AtomicString& old_value,
 Node* ShadowRoot::Clone(Document&,
                         NodeCloningData&,
                         ContainerNode*,
+                        CustomElementRegistry*,
                         ExceptionState&) const {
   NOTREACHED() << "ShadowRoot nodes are not clonable.";
 }
 
-String ShadowRoot::innerHTML() const {
+String ShadowRoot::GetInnerHTMLString() const {
   return CreateMarkup(this, kChildrenOnly);
 }
 
-void ShadowRoot::setInnerHTML(const String& html,
-                              ExceptionState& exception_state) {
+V8UnionStringLegacyNullToEmptyStringOrTrustedHTML* ShadowRoot::innerHTML()
+    const {
+  return MakeGarbageCollected<
+      V8UnionStringLegacyNullToEmptyStringOrTrustedHTML>(GetInnerHTMLString());
+}
+
+void ShadowRoot::SetInnerHTMLWithoutTrustedTypes(
+    const String& html,
+    ExceptionState& exception_state) {
   if (DocumentFragment* fragment = CreateFragmentForInnerOuterHTML(
           html, &host(), kAllowScriptingContent,
           Element::ParseDeclarativeShadowRoots::kDontParse,
-          Element::ForceHtml::kDontForce, exception_state)) {
+          Element::ForceHtml::kDontForce, customElementRegistry(),
+          exception_state)) {
     ReplaceChildrenWithFragment(this, fragment, exception_state);
   }
 }
 
-void ShadowRoot::setHTMLUnsafe(const String& html,
+void ShadowRoot::setInnerHTML(
+    const V8UnionStringLegacyNullToEmptyStringOrTrustedHTML* html,
+    ExceptionState& exception_state) {
+  String compliant_html = TrustedTypesCheckForHTML(
+      html, GetExecutionContext(), "ShadowRoot", "innerHTML", exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  SetInnerHTMLWithoutTrustedTypes(compliant_html, exception_state);
+}
+
+void ShadowRoot::setHTMLUnsafe(const V8UnionStringOrTrustedHTML* html,
                                ExceptionState& exception_state) {
   UseCounter::Count(GetDocument(), WebFeature::kHTMLUnsafeMethods);
+  String compliant_html =
+      TrustedTypesCheckForHTML(html, GetExecutionContext(), "ShadowRoot",
+                               "setHTMLUnsafe", exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
   if (DocumentFragment* fragment = CreateFragmentForInnerOuterHTML(
-          html, &host(), kAllowScriptingContent,
+          compliant_html, &host(), kAllowScriptingContent,
           Element::ParseDeclarativeShadowRoots::kParse,
-          Element::ForceHtml::kDontForce, exception_state)) {
+          Element::ForceHtml::kDontForce, customElementRegistry(),
+          exception_state)) {
     if (RuntimeEnabledFeatures::SanitizerAPIEnabled()) {
       SanitizerAPI::SanitizeUnsafeInternal(fragment, nullptr, exception_state);
     }
@@ -155,13 +193,20 @@ void ShadowRoot::setHTMLUnsafe(const String& html,
   }
 }
 
-void ShadowRoot::setHTMLUnsafe(const String& html,
-                               SetHTMLOptions* options,
+void ShadowRoot::setHTMLUnsafe(const V8UnionStringOrTrustedHTML* html,
+                               SetHTMLUnsafeOptions* options,
                                ExceptionState& exception_state) {
+  String compliant_html =
+      TrustedTypesCheckForHTML(html, GetExecutionContext(), "ShadowRoot",
+                               "setHTMLUnsafe", exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
   if (DocumentFragment* fragment = CreateFragmentForInnerOuterHTML(
-          html, &host(), kAllowScriptingContent,
+          compliant_html, &host(), kAllowScriptingContent,
           Element::ParseDeclarativeShadowRoots::kParse,
-          Element::ForceHtml::kDontForce, exception_state)) {
+          Element::ForceHtml::kDontForce, customElementRegistry(),
+          exception_state)) {
     if (RuntimeEnabledFeatures::SanitizerAPIEnabled()) {
       SanitizerAPI::SanitizeUnsafeInternal(fragment, options, exception_state);
     }
@@ -175,7 +220,8 @@ void ShadowRoot::setHTML(const String& html,
   if (DocumentFragment* fragment = CreateFragmentForInnerOuterHTML(
           html, &host(), kAllowScriptingContent,
           Element::ParseDeclarativeShadowRoots::kParse,
-          Element::ForceHtml::kDontForce, exception_state)) {
+          Element::ForceHtml::kDontForce, customElementRegistry(),
+          exception_state)) {
     if (RuntimeEnabledFeatures::SanitizerAPIEnabled()) {
       SanitizerAPI::SanitizeSafeInternal(fragment, options, exception_state);
     }
@@ -267,6 +313,70 @@ V8SlotAssignmentMode ShadowRoot::slotAssignment() const {
                                   : V8SlotAssignmentMode::Enum::kNamed);
 }
 
+HeapVector<Member<CSSStyleSheet>>
+ShadowRoot::GetFetchedStyleSheetsFromModuleMap(
+    const AtomicString& shadowrootadoptedstylesheets_attribute_value) {
+  CHECK(RuntimeEnabledFeatures::DeclarativeCSSModulesEnabled());
+
+  LocalDOMWindow* window = GetDocument().domWindow();
+  Modulator* modulator =
+      Modulator::From(ToScriptStateForMainWorld(window->GetFrame()));
+  v8::Isolate* isolate = modulator->GetScriptState()->GetIsolate();
+  CHECK(isolate);
+
+  // Several operations below require a HandleScope.
+  v8::HandleScope handle_scope(isolate);
+
+  HeapVector<Member<CSSStyleSheet>> sheets;
+  SpaceSplitString specifiers(shadowrootadoptedstylesheets_attribute_value);
+  sheets.ReserveInitialCapacity(specifiers.size());
+
+  for (const auto& specifier : specifiers) {
+    // Resolve the specifier to ensure import maps are accounted for.
+    const KURL resolved_url = modulator->ResolveModuleSpecifier(
+        specifier, window->BaseURL(), /*failure_reason=*/nullptr);
+    if (resolved_url.IsValid()) {
+      // Synchronously fetch dataURI's. These will be processed immediately and
+      // available synchronously per https://fetch.spec.whatwg.org/#data-urls.
+      // We don't need to do this for Blob URL's generated from a <style
+      // type="module"> because they have already been added to the module map.
+      // TODO(crbug.com/448174611) - should RequestContextType and
+      // RequestDestination be script or style?
+      if (resolved_url.ProtocolIsData()) {
+        ScriptFetchOptions options;
+        ModuleScriptFetchRequest module_request(
+            resolved_url, ModuleType::kCSS,
+            mojom::blink::RequestContextType::SCRIPT,
+            network::mojom::RequestDestination::kScript, options,
+            Referrer::ClientReferrerString(), TextPosition::MinimumPosition(),
+            ModuleImportPhase::kEvaluation);
+        modulator->FetchSingle(module_request, window->Fetcher(),
+                               ModuleGraphLevel::kTopLevelModuleFetch,
+                               ModuleScriptCustomFetchType::kNone, nullptr);
+      }
+
+      const ModuleScript* module_script =
+          modulator->GetFetchedModuleScript(resolved_url, ModuleType::kCSS);
+      if (module_script) {
+        CSSStyleSheet* sheet = V8CSSStyleSheet::ToWrappable(
+            isolate,
+            static_cast<const ValueWrapperSyntheticModuleScript*>(module_script)
+                ->GetExport(isolate));
+        sheets.push_back(*sheet);
+      }
+    }
+  }
+  return sheets;
+}
+
+void ShadowRoot::ProcessAdoptedStylesheetAttribute(
+    AtomicString value) {
+  CHECK(RuntimeEnabledFeatures::DeclarativeCSSModulesEnabled());
+  if (!value.empty()) {
+    AppendAdoptedStyleSheets(GetFetchedStyleSheetsFromModuleMap(value));
+  }
+}
+
 void ShadowRoot::SetNeedsAssignmentRecalc() {
   if (!slot_assignment_)
     return;
@@ -308,20 +418,14 @@ void ShadowRoot::ChildrenChanged(const ChildrenChange& change) {
   }
 }
 
-void ShadowRoot::SetRegistry(CustomElementRegistry* registry) {
-  DCHECK(!registry_);
-  DCHECK(!registry ||
-         RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled());
-  registry_ = registry;
-  if (registry) {
-    registry->AssociatedWith(GetDocument());
-  }
-}
-
 void ShadowRoot::setReferenceTarget(const AtomicString& reference_target) {
-  if (!RuntimeEnabledFeatures::ShadowRootReferenceTargetEnabled()) {
+  if (!RuntimeEnabledFeatures::ShadowRootReferenceTargetEnabled(
+          GetDocument().GetExecutionContext())) {
     return;
   }
+
+  UseCounter::CountWebDXFeature(GetDocument(),
+                                WebDXFeature::kDRAFT_ReferenceTarget);
 
   if (referenceTarget() == reference_target) {
     return;
@@ -371,7 +475,6 @@ void ShadowRoot::ReferenceTargetChanged() {
 
 void ShadowRoot::Trace(Visitor* visitor) const {
   visitor->Trace(slot_assignment_);
-  visitor->Trace(registry_);
   visitor->Trace(reference_target_id_observer_);
   ElementRareDataField::Trace(visitor);
   TreeScope::Trace(visitor);

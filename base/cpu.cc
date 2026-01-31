@@ -21,9 +21,9 @@
 #include <asm/hwcap.h>
 #include <sys/auxv.h>
 
-#include "base/files/file_util.h"
+#include <algorithm>
+
 #include "base/numerics/checked_math.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -38,9 +38,13 @@
 
 #if defined(ARCH_CPU_X86_FAMILY)
 #if defined(COMPILER_MSVC)
-#include <intrin.h>
 #include <immintrin.h>  // For _xgetbv()
+#include <intrin.h>
 #endif
+#endif
+
+#if BUILDFLAG(IS_MAC)
+#include "base/mac/mac_util.h"
 #endif
 
 namespace base {
@@ -139,8 +143,7 @@ uint64_t xgetbv(uint32_t xcr) {
 #else
   uint32_t eax, edx;
 
-  __asm__ volatile (
-    "xgetbv" : "=a"(eax), "=d"(edx) : "c"(xcr));
+  __asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(xcr));
   return (static_cast<uint64_t>(edx) << 32) | eax;
 #endif  // defined(COMPILER_MSVC)
 }
@@ -152,8 +155,12 @@ DEFINE_PROTECTED_DATA base::ProtectedMemory<CPU> g_cpu_instance;
 }  // namespace
 
 void CPU::Initialize() {
+#if BUILDFLAG(IS_MAC)
+  is_running_in_vm_ = mac::IsVirtualMachine();
+#endif
+
 #if defined(ARCH_CPU_X86_FAMILY)
-  int cpu_info[4] = {-1};
+  int cpu_info[4] = {-1, 0, 0, 0};
 
   // __cpuid with an InfoType argument of 0 returns the number of
   // valid Ids in CPUInfo[0] and the CPU identification string in
@@ -173,8 +180,8 @@ void CPU::Initialize() {
 
   // Interpret CPU feature information.
   if (num_ids > 0) {
-    int cpu_info7[4] = {0};
-    int cpu_einfo7[4] = {0};
+    int cpu_info7[4] = {};
+    int cpu_einfo7[4] = {};
     __cpuid(cpu_info, 1);
     if (num_ids >= 7) {
       __cpuid(cpu_info7, 7);
@@ -191,10 +198,10 @@ void CPU::Initialize() {
     model_ = results.model;
     ext_family_ = results.ext_family;
     ext_model_ = results.ext_model;
-    has_mmx_ =   (cpu_info[3] & 0x00800000) != 0;
-    has_sse_ =   (cpu_info[3] & 0x02000000) != 0;
-    has_sse2_ =  (cpu_info[3] & 0x04000000) != 0;
-    has_sse3_ =  (cpu_info[2] & 0x00000001) != 0;
+    has_mmx_ = (cpu_info[3] & 0x00800000) != 0;
+    has_sse_ = (cpu_info[3] & 0x02000000) != 0;
+    has_sse2_ = (cpu_info[3] & 0x04000000) != 0;
+    has_sse3_ = (cpu_info[2] & 0x00000001) != 0;
     has_ssse3_ = (cpu_info[2] & 0x00000200) != 0;
     has_sse41_ = (cpu_info[2] & 0x00080000) != 0;
     has_sse42_ = (cpu_info[2] & 0x00100000) != 0;
@@ -205,7 +212,9 @@ void CPU::Initialize() {
     // This is checking for any hypervisor. Hypervisors may choose not to
     // announce themselves. Hypervisors trap CPUID and sometimes return
     // different results to underlying hardware.
+#if !BUILDFLAG(IS_MAC)
     is_running_in_vm_ = (static_cast<uint32_t>(cpu_info[2]) & 0x80000000) != 0;
+#endif
 
     // AVX instructions will generate an illegal instruction exception unless
     //   a) they are supported by the CPU,
@@ -217,11 +226,10 @@ void CPU::Initialize() {
     // even after following Intel's example code. (See crbug.com/375968.)
     // Because of that, we also test the XSAVE bit because its description in
     // the CPUID documentation suggests that it signals xgetbv support.
-    has_avx_ =
-        (cpu_info[2] & 0x10000000) != 0 &&
-        (cpu_info[2] & 0x04000000) != 0 /* XSAVE */ &&
-        (cpu_info[2] & 0x08000000) != 0 /* OSXSAVE */ &&
-        (xgetbv(0) & 6) == 6 /* XSAVE enabled by kernel */;
+    has_avx_ = (cpu_info[2] & 0x10000000) != 0 &&
+               (cpu_info[2] & 0x04000000) != 0 /* XSAVE */ &&
+               (cpu_info[2] & 0x08000000) != 0 /* OSXSAVE */ &&
+               (xgetbv(0) & 6) == 6 /* XSAVE enabled by kernel */;
     has_aesni_ = (cpu_info[2] & 0x02000000) != 0;
     has_fma3_ = (cpu_info[2] & 0x00001000) != 0;
     if (has_avx_) {
@@ -236,6 +244,7 @@ void CPU::Initialize() {
     }
 
     has_pku_ = (cpu_info7[2] & 0x00000010) != 0;
+    has_pclmul_ = (cpu_info[2] & 0x00000002) != 0;
   }
 
   // Get the brand string of the cpu.
@@ -300,19 +309,45 @@ void CPU::Initialize() {
 
 #if defined(ARCH_CPU_X86_FAMILY)
 CPU::IntelMicroArchitecture CPU::GetIntelMicroArchitecture() const {
-  if (has_avx512_vnni()) return AVX512_VNNI;
-  if (has_avx512_bw()) return AVX512BW;
-  if (has_avx512_f()) return AVX512F;
-  if (has_avx_vnni()) return AVX_VNNI;
-  if (has_avx2()) return AVX2;
-  if (has_fma3()) return FMA3;
-  if (has_avx()) return AVX;
-  if (has_sse42()) return SSE42;
-  if (has_sse41()) return SSE41;
-  if (has_ssse3()) return SSSE3;
-  if (has_sse3()) return SSE3;
-  if (has_sse2()) return SSE2;
-  if (has_sse()) return SSE;
+  if (has_avx512_vnni()) {
+    return AVX512_VNNI;
+  }
+  if (has_avx512_bw()) {
+    return AVX512BW;
+  }
+  if (has_avx512_f()) {
+    return AVX512F;
+  }
+  if (has_avx_vnni()) {
+    return AVX_VNNI;
+  }
+  if (has_avx2()) {
+    return AVX2;
+  }
+  if (has_fma3()) {
+    return FMA3;
+  }
+  if (has_avx()) {
+    return AVX;
+  }
+  if (has_sse42()) {
+    return SSE42;
+  }
+  if (has_sse41()) {
+    return SSE41;
+  }
+  if (has_ssse3()) {
+    return SSSE3;
+  }
+  if (has_sse3()) {
+    return SSE3;
+  }
+  if (has_sse2()) {
+    return SSE2;
+  }
+  if (has_sse()) {
+    return SSE;
+  }
   return PENTIUM;
 }
 #endif

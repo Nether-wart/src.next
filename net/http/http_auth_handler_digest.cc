@@ -2,17 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "net/http/http_auth_handler_digest.h"
 
+#include <array>
 #include <string>
 #include <string_view>
 
-#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
@@ -20,6 +15,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "crypto/random.h"
 #include "net/base/features.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_string_util.h"
@@ -69,12 +65,18 @@ HttpAuthHandlerDigest::DynamicNonceGenerator::DynamicNonceGenerator() = default;
 std::string HttpAuthHandlerDigest::DynamicNonceGenerator::GenerateNonce()
     const {
   // This is how mozilla generates their cnonce -- a 16 digit hex string.
-  static const char domain[] = "0123456789abcdef";
+
+  std::array<uint8_t, 8> rand_bytes;
+  crypto::RandBytes(rand_bytes);
+
   std::string cnonce;
   cnonce.reserve(16);
-  for (int i = 0; i < 16; ++i) {
-    cnonce.push_back(domain[base::RandInt(0, 15)]);
+  for (const uint8_t byte : rand_bytes) {
+    // It shouldn't matter whether this is capitalized or not, but safest to
+    // preserve behavior of using lowercase hex strings.
+    base::AppendHexEncodedByte(byte, cnonce, /*uppercase=*/false);
   }
+  DCHECK_EQ(cnonce.size(), 16u);
   return cnonce;
 }
 
@@ -374,8 +376,7 @@ class HttpAuthHandlerDigest::DigestContext {
     uint8_t md_value[EVP_MAX_MD_SIZE] = {};
     unsigned int md_len = sizeof(md_value);
     CHECK(EVP_DigestFinal_ex(md_ctx_.get(), md_value, &md_len));
-    return base::ToLowerASCII(
-        base::HexEncode(base::span(md_value).first(out_len_)));
+    return base::HexEncodeLower(base::span(md_value).first(out_len_));
   }
 
  private:

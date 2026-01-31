@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "ash/wm/window_pin_util.h"
+#include "base/containers/to_vector.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "chrome/browser/ash/file_manager/open_util.h"
@@ -13,6 +14,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/simple_message_box.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/aura/window.h"
@@ -57,21 +59,12 @@ void ShowWarningOnOpenOperationResult(Profile* profile,
   }
 
   Browser* browser = chrome::FindTabbedBrowser(profile, false);
-  chrome::ShowWarningMessageBox(
+  chrome::ShowWarningMessageBoxAsync(
       browser ? browser->window()->GetNativeWindow() : nullptr,
-      path.BaseName().AsUTF16Unsafe(),
-      l10n_util::GetStringUTF16(message_id));
+      path.BaseName().AsUTF16Unsafe(), l10n_util::GetStringUTF16(message_id));
 }
 
 }  // namespace
-
-namespace internal {
-
-void DisableShellOperationsForTesting() {
-  file_manager::util::DisableShellOperationsForTesting();
-}
-
-}  // namespace internal
 
 void ShowItemInFolder(Profile* profile, const base::FilePath& full_path) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -115,7 +108,8 @@ bool IsBrowserLockedFullscreen(const Browser* browser) {
   // |window| can be nullptr inside of unit tests.
   if (!window)
     return false;
-  return GetWindowPinType(window) == chromeos::WindowPinType::kTrustedPinned;
+  return ash::GetWindowPinType(window) ==
+         chromeos::WindowPinType::kLockedFullscreen;
 }
 
 }  // namespace platform_util
